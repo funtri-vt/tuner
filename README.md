@@ -1,2 +1,2 @@
-# Bb-trumper-tuner
-A simple trumpet tuning web app written by Google Gemini 3.1 Pro.
+# tuner
+A simple tuning web app written with Google Gemini 3.1 Pro.
