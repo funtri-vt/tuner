@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Bb Trumpet Tuner</title>
+    <style>
+        :root {
+            --bg-color: #121212;
+            --panel-bg: #1e1e1e;
+            --text-color: #ffffff;
+            --accent-color: #f39c12;
+            --in-tune-color: #2ecc71;
+            --flat-color: #3498db;
+            --sharp-color: #e74c3c;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 1rem;
+            box-sizing: border-box;
+            text-align: center;
+        }
+
+        .tuner-container {
+            background-color: var(--panel-bg);
+            padding: 2rem;
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            width: 100%;
+            max-width: 380px;
+        }
+
+        h1 {
+            margin-top: 0;
+            font-size: 1.4rem;
+            color: var(--accent-color);
+            letter-spacing: 0.5px;
+        }
+
+        .note-display {
+            font-size: 5rem;
+            font-weight: 800;
+            margin: 0.5rem 0;
+            height: 100px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: color 0.2s ease;
+        }
+
+        .octave {
+            font-size: 1.5rem;
+            vertical-align: bottom;
+            color: #888;
+            margin-left: 4px;
+        }
+
+        .cents {
+            font-size: 1.1rem;
+            font-family: monospace;
+            color: #aaa;
+            margin-bottom: 1rem;
+        }
+
+        .meter {
+            width: 100%;
+            height: 16px;
+            background: linear-gradient(to right, var(--flat-color) 0%, #444 45%, var(--in-tune-color) 50%, #444 55%, var(--sharp-color) 100%);
+            border-radius: 8px;
+            position: relative;
+            margin: 1.5rem 0;
+        }
+
+        .needle {
+            width: 4px;
+            height: 24px;
+            background-color: white;
+            position: absolute;
+            top: -4px;
+            left: 50%;
+            transform: translateX(-50%);
+            border-radius: 2px;
+            transition: left 0.1s ease-out, background-color 0.2s;
+            box-shadow: 0 0 4px rgba(0,0,0,0.8);
+        }
+
+        .status-text {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85rem;
+            color: #aaa;
+            margin-bottom: 2rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .button-group {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        button {
+            background-color: var(--accent-color);
+            color: white;
+            border: none;
+            padding: 14px;
+            font-size: 1rem;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-weight: 700;
+            width: 100%;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+
+        .btn-secondary {
+            background-color: transparent;
+            border: 2px solid var(--accent-color);
+            color: var(--accent-color);
+        }
+
+        .btn-danger {
+            background-color: #e74c3c;
+            border-color: #e74c3c;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="tuner-container">
+        <h1>Bb Trumpet Tuner</h1>
+        
+        <div class="note-display" id="note">--</div>
+        <div class="cents" id="cents">0 cents</div>
+        
+        <div class="meter">
+            <div class="needle" id="needle"></div>
+        </div>
+        
+        <div class="status-text">
+            <span>Flat</span>
+            <span>In Tune</span>
+            <span>Sharp</span>
+        </div>
+
+        <div class="button-group">
+            <button id="startBtn">Start Tuner</button>
+            <button id="droneBtn" class="btn-secondary">Play Drone (Trumpet C)</button>
+        </div>
+    </div>
+
+    <script>
+        // --- Tuner Variables ---
+        let audioContext;
+        let analyser;
+        let microphone;
+        let isTuning = false;
+        let animationId;
+
+        // --- Drone Variables ---
+        let droneContext;
+        let droneOscillator;
+        let droneGain;
+        let isDronePlaying = false;
+
+        // --- DOM Elements ---
+        const startBtn = document.getElementById('startBtn');
+        const droneBtn = document.getElementById('droneBtn');
+        const noteDisplay = document.getElementById('note');
+        const centsDisplay = document.getElementById('cents');
+        const needle = document.getElementById('needle');
+
+        const noteStrings = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+
+        // ==========================================
+        // TUNER LOGIC
+        // ==========================================
+
+        startBtn.addEventListener('click', async () => {
+            if (isTuning) {
+                stopTuning();
+            } else {
+                await startTuning();
+            }
+        });
+
+        async function startTuning() {
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 2048;
+                
+                microphone = audioContext.createMediaStreamSource(stream);
+                microphone.connect(analyser);
+                
+                isTuning = true;
+                startBtn.textContent = "Stop Tuner";
+                startBtn.classList.add('btn-danger');
+                startBtn.style.backgroundColor = ""; // Clear inline to let class take over
+                
+                updatePitch();
+            } catch (err) {
+                alert("Microphone access is required to use the tuner.");
+                console.error(err);
+            }
+        }
+
+        function stopTuning() {
+            isTuning = false;
+            cancelAnimationFrame(animationId);
+            if (audioContext) {
+                audioContext.close();
+            }
+            startBtn.textContent = "Start Tuner";
+            startBtn.classList.remove('btn-danger');
+            
+            // Reset UI
+            noteDisplay.textContent = "--";
+            noteDisplay.style.color = "var(--text-color)";
+            centsDisplay.textContent = "0 cents";
+            needle.style.left = "50%";
+            needle.style.backgroundColor = "white";
+        }
+
+        // Fast Autocorrelation for Pitch Detection
+        function autoCorrelate(buf, sampleRate) {
+            let SIZE = buf.length;
+            let rms = 0;
+
+            for (let i = 0; i < SIZE; i++) rms += buf[i] * buf[i];
+            rms = Math.sqrt(rms / SIZE);
+            if (rms < 0.01) return -1; // Not enough volume
+
+            let r1 = 0, r2 = SIZE - 1, thres = 0.2;
+            for (let i = 0; i < SIZE / 2; i++) if (Math.abs(buf[i]) < thres) { r1 = i; break; }
+            for (let i = 1; i < SIZE / 2; i++) if (Math.abs(buf[SIZE - i]) < thres) { r2 = SIZE - i; break; }
+
+            buf = buf.slice(r1, r2);
+            SIZE = buf.length;
+
+            let c = new Array(SIZE).fill(0);
+            for (let i = 0; i < SIZE; i++)
+                for (let j = 0; j < SIZE - i; j++)
+                    c[i] = c[i] + buf[j] * buf[j + i];
+
+            let d = 0; while (c[d] > c[d + 1]) d++;
+            let maxval = -1, maxpos = -1;
+            for (let i = d; i < SIZE; i++) {
+                if (c[i] > maxval) { maxval = c[i]; maxpos = i; }
+            }
+            let T0 = maxpos;
+
+            // Interpolation for accuracy
+            let x1 = c[T0 - 1], x2 = c[T0], x3 = c[T0 + 1];
+            let a = (x1 + x3 - 2 * x2) / 2;
+            let b = (x3 - x1) / 2;
+            if (a) T0 = T0 - b / (2 * a);
+
+            return sampleRate / T0;
+        }
+
+        function noteFromPitch(frequency) {
+            const noteNum = 12 * (Math.log(frequency / 440) / Math.log(2));
+            return Math.round(noteNum) + 69; 
+        }
+
+        function frequencyFromNoteNumber(note) {
+            return 440 * Math.pow(2, (note - 69) / 12);
+        }
+
+        function centsOffFromPitch(frequency, note) {
+            return Math.floor(1200 * Math.log(frequency / frequencyFromNoteNumber(note)) / Math.log(2));
+        }
+
+        function updatePitch() {
+            const buffer = new Float32Array(analyser.fftSize);
+            analyser.getFloatTimeDomainData(buffer);
+            const ac = autoCorrelate(buffer, audioContext.sampleRate);
+
+            if (ac === -1) {
+                needle.style.opacity = 0.3; // Dim needle when quiet
+            } else {
+                needle.style.opacity = 1;
+                let concertPitch = ac;
+                let concertMidiNote = noteFromPitch(concertPitch);
+                
+                // Bb Transposition: Trumpet sounds 2 semitones lower than written.
+                // Display note = Concert note + 2 semitones.
+                let trumpetMidiNote = concertMidiNote + 2;
+                
+                let noteName = noteStrings[trumpetMidiNote % 12];
+                let octave = Math.floor(trumpetMidiNote / 12) - 1;
+                let cents = centsOffFromPitch(concertPitch, concertMidiNote);
+                
+                // Update Text
+                noteDisplay.innerHTML = `${noteName}<span class="octave">${octave}</span>`;
+                centsDisplay.textContent = `${cents > 0 ? '+' : ''}${cents} cents`;
+
+                // Update Meter (-50 to +50 cents maps to 0% to 100%)
+                let meterPosition = Math.max(0, Math.min(100, cents + 50));
+                needle.style.left = `${meterPosition}%`;
+
+                // Update Colors
+                if (Math.abs(cents) <= 5) {
+                    needle.style.backgroundColor = "var(--in-tune-color)";
+                    noteDisplay.style.color = "var(--in-tune-color)";
+                } else if (cents < -5) {
+                    needle.style.backgroundColor = "var(--flat-color)";
+                    noteDisplay.style.color = "var(--text-color)";
+                } else {
+                    needle.style.backgroundColor = "var(--sharp-color)";
+                    noteDisplay.style.color = "var(--text-color)";
+                }
+            }
+
+            if (isTuning) {
+                animationId = requestAnimationFrame(updatePitch);
+            }
+        }
+
+        // ==========================================
+        // DRONE LOGIC
+        // ==========================================
+
+        droneBtn.addEventListener('click', () => {
+            // Initialize audio context on first click to bypass browser auto-play blocks
+            if (!droneContext) {
+                droneContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+
+            if (isDronePlaying) {
+                // Fade out and stop to avoid audio clicking
+                droneGain.gain.setTargetAtTime(0, droneContext.currentTime, 0.05);
+                setTimeout(() => {
+                    droneOscillator.stop();
+                    droneOscillator.disconnect();
+                }, 100);
+                
+                droneBtn.textContent = "Play Drone (Trumpet C)";
+                droneBtn.classList.add('btn-secondary');
+                droneBtn.classList.remove('btn-danger');
+            } else {
+                // Resume context if suspended
+                if (droneContext.state === 'suspended') droneContext.resume();
+
+                droneOscillator = droneContext.createOscillator();
+                droneGain = droneContext.createGain();
+
+                // Triangle wave has a slightly richer harmonic profile than a pure sine, better for brass referencing
+                droneOscillator.type = 'triangle'; 
+                // Concert Bb4 (Trumpet C5) frequency
+                droneOscillator.frequency.value = 466.16; 
+
+                // Start at 0 volume and fade in quickly
+                droneGain.gain.setValueAtTime(0, droneContext.currentTime);
+                droneGain.gain.linearRampToValueAtTime(0.3, droneContext.currentTime + 0.1);
+
+                droneOscillator.connect(droneGain);
+                droneGain.connect(droneContext.destination);
+                droneOscillator.start();
+
+                droneBtn.textContent = "Stop Drone";
+                droneBtn.classList.remove('btn-secondary');
+                droneBtn.classList.add('btn-danger');
+            }
+            isDronePlaying = !isDronePlaying;
+        });
+    </script>
+</body>
+</html>
